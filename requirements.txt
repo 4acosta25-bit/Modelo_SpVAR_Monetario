@@ -1,0 +1,15 @@
+streamlit
+streamlit-folium
+geopandas
+pysal
+spreg
+libpysal
+esda
+folium
+plotly
+mapclassify
+numpy
+pandas
+scipy
+statsmodels
+shapely
