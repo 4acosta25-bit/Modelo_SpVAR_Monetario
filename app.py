@@ -224,11 +224,18 @@ tab1, tab2, tab3, tab4 = st.tabs([
 with tab1:
     col_var, col_info = st.columns([1, 3])
     with col_var:
-        selected_var = st.selectbox(
+        var_dict = {
+            "Inflación IPC (%)": "Inflation_IPC",
+            "Crecimiento M2 (%)": "M2_Growth",
+            "Radiancia VIIRS": "VIIRS_Lights"
+        }
+        
+        selected_label = st.selectbox(
             "Seleccionar Variable Macro para Mapa Coroplético",
-            options=["Inflation_IPC", "M2_Growth", "VIIRS_Lights"],
-            format_func=lambda x: "Inflación IPC (%)" if x == "Inflation_IPC" else ("Crecimiento M2 (%)" if x == "M2_Growth" else "Radiancia VIIRS")
+            options=list(var_dict.keys())
         )
+        selected_var = var_dict[selected_label]
+        
         st.info("El mapa interactivo renderiza la distribución departamental con tooltips detallados de las variables macroeconómicas.")
 
     center_lat = float(gdf_data['centroid_lat'].mean())
@@ -241,16 +248,18 @@ with tab1:
         attr="Esri World Light Gray Canvas"
     )
 
+    color_scheme = 'YlOrRd' if selected_var == "Inflation_IPC" else ('YlGnBu' if selected_var == "M2_Growth" else 'YlGn')
+
     folium.Choropleth(
         geo_data=gdf_data.__geo_interface__,
         name='choropleth',
         data=gdf_data,
         columns=['code', selected_var],
         key_on='feature.properties.code',
-        fill_color='YlOrRd' if selected_var == "Inflation_IPC" else 'Viridis',
+        fill_color=color_scheme,
         fill_opacity=0.85,
         line_opacity=0.3,
-        legend_name=f"{selected_var}"
+        legend_name=f"{selected_label}"
     ).add_to(m)
 
     folium.features.GeoJson(
