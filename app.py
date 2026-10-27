@@ -9,7 +9,7 @@ from typing import Tuple, Dict, Any
 import numpy as np
 import pandas as pd
 import geopandas as gpd
-from shapely.geometry import box, Polygon
+from shapely.geometry import box
 import scipy.stats as stats
 import statsmodels.api as sm
 
@@ -46,14 +46,12 @@ st.markdown('<div class="main-header">Modelo Vector Autorregresivo Espacial (SpV
 st.markdown('<div class="sub-header">Transmisión Espacial de la Oferta Monetaria e Inflación Departamental en Colombia</div>', unsafe_allow_html=True)
 
 # ------------------------------------------------------------------------------
-# 1. CARGA DE DATOS GEOGRÁFICOS REALES (GEOMETRÍA OFICIAL DE DEPARTAMENTOS DE COLOMBIA)
+# 1. CARGA DE DATOS GEOGRÁFICOS Y GENERACIÓN DE PANEL SINTÉTICO ROBUSTO
 # ------------------------------------------------------------------------------
-# Lista de URLs con GeoJSON reales y detallados del mapa oficial de Colombia
 GEOJSON_URLS = [
     "https://raw.githubusercontent.com/mdeandal/colombia-json/master/colombia.json",
     "https://raw.githubusercontent.com/resilience-building/colombia-geojson/master/colombia-departments.json",
-    "https://gist.githubusercontent.com/john-guerra/43c7656821b2f972bf0f/raw/colombia.geo.json",
-    "https://raw.githubusercontent.com/finiterank/mapa-colombia-json/master/colombia-departamentos.json"
+    "https://gist.githubusercontent.com/john-guerra/43c7656821b2f972bf0f/raw/colombia.geo.json"
 ]
 
 @st.cache_data
@@ -62,14 +60,13 @@ def get_colombia_geodata() -> gpd.GeoDataFrame:
     for url in GEOJSON_URLS:
         try:
             temp_gdf = gpd.read_file(url)
-            if temp_gdf is not None and len(temp_gdf) >= 25:
+            if temp_gdf is not None and len(temp_gdf) > 0:
                 gdf = temp_gdf
                 break
         except Exception:
             continue
 
     if gdf is None:
-        # Si falla la red, se genera una estructura estilizada aproximada no cuadrada
         colombia_dptos = [
             ("Amazonas", -70.5, -1.5), ("Antioquia", -75.5, 6.5), ("Arauca", -70.7, 6.8),
             ("Atlántico", -74.9, 10.8), ("Bolívar", -74.3, 8.5), ("Boyacá", -73.0, 5.5),
@@ -84,30 +81,12 @@ def get_colombia_geodata() -> gpd.GeoDataFrame:
             ("Vaupés", -70.0, 0.8), ("Vichada", -69.5, 4.5)
         ]
         names = [d[0] for d in colombia_dptos]
-        polygons = []
-        for d in colombia_dptos:
-            lon, lat = d[1], d[2]
-            # Polígono irregular de 6 vértices para simular contornos departamentales naturales
-            pts = [
-                (lon - 0.4, lat - 0.3), (lon + 0.3, lat - 0.4), (lon + 0.5, lat + 0.1),
-                (lon + 0.2, lat + 0.5), (lon - 0.3, lat + 0.4), (lon - 0.5, lat)
-            ]
-            polygons.append(Polygon(pts))
+        polygons = [box(d[1] - 0.5, d[2] - 0.5, d[1] + 0.5, d[2] + 0.5) for d in colombia_dptos]
         gdf = gpd.GeoDataFrame({
             'code': [str(i+1).zfill(2) for i in range(len(names))],
             'dpto_name': names,
             'geometry': polygons
         }, crs="EPSG:4326")
-
-    # Identificación estandarizada de nombres de departamentos
-    if 'NOMBRE_DPT' in gdf.columns:
-        gdf['dpto_name'] = gdf['NOMBRE_DPT']
-    elif 'NAME_1' in gdf.columns:
-        gdf['dpto_name'] = gdf['NAME_1']
-    elif 'nombre' in gdf.columns:
-        gdf['dpto_name'] = gdf['nombre']
-    elif 'dpto_name' not in gdf.columns:
-        gdf['dpto_name'] = [f"Departamento_{i+1}" for i in range(len(gdf))]
 
     if 'DPTO' in gdf.columns:
         gdf['code'] = gdf['DPTO'].astype(str).str.zfill(2)
@@ -115,6 +94,13 @@ def get_colombia_geodata() -> gpd.GeoDataFrame:
         gdf['code'] = gdf['id'].astype(str).str.zfill(2)
     elif 'code' not in gdf.columns:
         gdf['code'] = [str(i+1).zfill(2) for i in range(len(gdf))]
+
+    if 'NOMBRE_DPT' in gdf.columns:
+        gdf['dpto_name'] = gdf['NOMBRE_DPT']
+    elif 'NAME_1' in gdf.columns:
+        gdf['dpto_name'] = gdf['NAME_1']
+    elif 'dpto_name' not in gdf.columns:
+        gdf['dpto_name'] = [f"Departamento_{i+1}" for i in range(len(gdf))]
 
     gdf = gdf[['code', 'dpto_name', 'geometry']].copy()
     gdf = gdf.to_crs(epsg=4326)
@@ -226,7 +212,7 @@ def run_spvar_model(_gdf: gpd.GeoDataFrame):
 model_results = run_spvar_model(gdf_data)
 
 # ------------------------------------------------------------------------------
-# 3. CONSTRUCCIÓN DE LA INTERFAZ CON MAPA ORGANIZADO
+# 3. CONSTRUCCIÓN DE LA INTERFAZ
 # ------------------------------------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "🗺️ Mapas Espaciales", 
@@ -250,21 +236,20 @@ with tab1:
         )
         selected_var = var_dict[selected_label]
         
-        st.info("El mapa oficial muestra la división real de los departamentos de Colombia con sus nombres etiquetados claramente sobre el territorio.")
+        st.info("El mapa interactivo renderiza la distribución departamental con tooltips detallados de las variables macroeconómicas.")
 
-    center_lat = 4.5709
-    center_lon = -74.2973
+    center_lat = float(gdf_data['centroid_lat'].mean())
+    center_lon = float(gdf_data['centroid_lon'].mean())
 
-    # Mapa base limpio estilizado (CartoDB Positron / Esri Canvas)
     m = folium.Map(
         location=[center_lat, center_lon],
         zoom_start=5,
-        tiles="CartoDB positron"
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri World Light Gray Canvas"
     )
 
     color_scheme = 'YlOrRd' if selected_var == "Inflation_IPC" else ('YlGnBu' if selected_var == "M2_Growth" else 'YlGn')
 
-    # Capa del Mapa Coroplético oficial
     folium.Choropleth(
         geo_data=gdf_data.__geo_interface__,
         name='choropleth',
@@ -272,42 +257,23 @@ with tab1:
         columns=['code', selected_var],
         key_on='feature.properties.code',
         fill_color=color_scheme,
-        fill_opacity=0.75,
-        line_opacity=0.6,
-        line_color='#2c3e50',
+        fill_opacity=0.85,
+        line_opacity=0.3,
         legend_name=f"{selected_label}"
     ).add_to(m)
 
-    # Añadir marcadores de texto con los nombres de cada departamento (etiquetas claras como en el mapa oficial)
-    for _, row in gdf_data.iterrows():
-        lat = row['centroid_lat']
-        lon = row['centroid_lon']
-        name = row['dpto_name']
-        val = row[selected_var]
-        
-        # Etiqueta visual sobre el centroide
-        folium.Marker(
-            location=[lat, lon],
-            icon=folium.DivIcon(
-                html=f"""<div style="font-family: Arial, sans-serif; font-size: 9px; font-weight: bold; color: #1a252f; text-shadow: 1px 1px 2px #ffffff; text-align: center; white-space: nowrap;">
-                            {name}<br><span style="color: #c0392b; font-size: 8px;">({val})</span>
-                         </div>"""
-            )
-        ).add_to(m)
-
-    # Interactividad Tooltip
     folium.features.GeoJson(
         gdf_data,
-        style_function=lambda x: {'fillColor': '#ffffff00', 'color': '#2c3e50', 'weight': 1},
-        highlight_function=lambda x: {'fillColor': '#00000000', 'color': '#e74c3c', 'weight': 2.5},
+        style_function=lambda x: {'fillColor': '#ffffff00', 'color': '#000000', 'weight': 0.5},
+        highlight_function=lambda x: {'fillColor': '#00000000', 'color': '#000000', 'weight': 2},
         tooltip=folium.features.GeoJsonTooltip(
             fields=['dpto_name', 'Inflation_IPC', 'M2_Growth', 'VIIRS_Lights'],
-            aliases=['Departamento:', 'Inflación IPC (%):', 'M2 Crecimiento (%):', 'Luces VIIRS:'],
-            style="background-color: white; color: #2c3e50; font-family: arial; font-size: 12px; padding: 10px; border-radius: 5px;"
+            aliases=['Departamento:', 'Inflación (%):', 'M2 Crecimiento (%):', 'Luces VIIRS:'],
+            style="background-color: white; color: #333333; font-family: arial; font-size: 12px; padding: 10px;"
         )
     ).add_to(m)
 
-    st_folium(m, width=1050, height=650, returned_objects=[])
+    st_folium(m, width=1000, height=520, returned_objects=[])
 
 with tab2:
     fig_3d = go.Figure(data=[go.Scatter3d(
